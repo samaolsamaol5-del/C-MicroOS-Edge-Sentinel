@@ -2,70 +2,70 @@ name: Build & Release C-MicroOS Edge Sentinel
 
 on:
   push:
-    branches: [ "main" ]
     tags:
       - 'v*'
 
-permissions:
-  contents: write
-
 jobs:
   build:
+    name: Build (${{ matrix.os }}, ${{ matrix.arch }}, ${{ matrix.output }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            target: linux-x64
-            bin_name: cmicro_os
+            arch: linux-x64
+            output: cmicro_os
           - os: windows-latest
-            target: windows-x64
-            bin_name: cmicro_os.exe
+            arch: windows-x64
+            output: cmicro_os.exe
           - os: macos-latest
-            target: macos-universal
-            bin_name: cmicro_os
-
-    runs-on: ${{ matrix.os }}
+            arch: macos-universal
+            output: cmicro_os
 
     steps:
-      - name: Checkout Source
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build Binary
+      - name: Build Project
         run: cmake --build build --config Release
 
-      - name: Package Binary
+      - name: Rename Artifact
         shell: bash
         run: |
-          mkdir -p dist
-          if [ -f "build/Release/${{ matrix.bin_name }}" ]; then
-            cp "build/Release/${{ matrix.bin_name }}" "dist/C-MicroOS-${{ matrix.target }}.exe"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp build/Release/cmicro_os.exe ./${{ matrix.output }}
           else
-            cp "build/${{ matrix.bin_name }}" "dist/C-MicroOS-${{ matrix.target }}"
+            cp build/cmicro_os ./${{ matrix.output }}
           fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: C-MicroOS-${{ matrix.target }}
-          path: dist/*
+          name: C-MicroOS-${{ matrix.arch }}
+          path: ${{ matrix.output }}
 
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Download All Artifacts
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release & Upload Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
-          generate_release_notes: true
+          files: |
+            artifacts/C-MicroOS-linux-x64/cmicro_os
+            artifacts/C-MicroOS-windows-x64/cmicro_os.exe
+            artifacts/C-MicroOS-macos-universal/cmicro_os
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
