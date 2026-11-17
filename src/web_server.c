@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
+#include <curl/curl.h>
 
 #if defined(_WIN32)
     #include <winsock2.h>
@@ -27,17 +28,45 @@ static char TELEGRAM_BOT_TOKEN[128] = "";
 static char TELEGRAM_CHAT_ID[64] = "";
 static time_t last_alert_time = 0;
 
-static int validate_license_key(const char *key) {
-    if (!key || strncmp(key, "CMICRO-PRO-", 11) != 0 || strlen(key) != 20) return 0;
-    if (key[15] != '-') return 0;
-    unsigned int sum = 0;
-    for (int i = 11; i < 15; i++) {
-        if (key[i] < 'A' || key[i] > 'Z') return 0;
-        sum += key[i];
+static size_t gumroad_write_cb(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    char *buf = (char *)userp;
+    if (strlen(buf) + realsize < 1023) {
+        strncat(buf, (char *)contents, realsize);
     }
-    char expected[5];
-    snprintf(expected, sizeof(expected), "%04X", (sum * 31337) & 0xFFFF);
-    return strncmp(key + 16, expected, 4) == 0;
+    return realsize;
+}
+
+static int validate_license_key(const char *key) {
+    if (!key || strlen(key) < 10) return 0;
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return 0;
+
+    char response_buf[1024] = {0};
+    char post_fields[256];
+    const char *product_id = "4C6V-iD0zX_5_w5pOiWDNg==";
+    snprintf(post_fields, sizeof(post_fields), "product_id=%s&license_key=%s", product_id, key);
+
+    curl_easy_setopt(curl, CURLOPT_URL, "https://api.gumroad.com/v2/licenses/verify");
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gumroad_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, response_buf);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+
+    if (res == CURLE_OK) {
+        if (strstr(response_buf, "\"success\":true") != NULL &&
+            strstr(response_buf, "\"refunded\":true") == NULL &&
+            strstr(response_buf, "\"chargebacked\":true") == NULL) {
+            FILE *f = fopen(".cmicro_license", "w");
+            if (f) { fprintf(f, "%s", key); fclose(f); }
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static void send_telegram_alert(double cpu, double ram) {
@@ -217,6 +246,14 @@ void start_web_server(int port) {
     if (env_token && strlen(env_token) > 0) snprintf(SERVER_TOKEN, sizeof(SERVER_TOKEN), "%s", env_token);
     char *env_lic = getenv("CMICRO_LICENSE");
     if (env_lic && validate_license_key(env_lic)) IS_PRO_LICENSED = 1;
+    if (!IS_PRO_LICENSED) {
+        FILE *f = fopen(".cmicro_license", "r");
+        if (f) {
+            char saved_key[64] = {0};
+            if (fscanf(f, "%60s", saved_key) == 1 && validate_license_key(saved_key)) IS_PRO_LICENSED = 1;
+            fclose(f);
+        }
+    }
     char *env_tg_token = getenv("CMICRO_TG_TOKEN");
     if (env_tg_token) snprintf(TELEGRAM_BOT_TOKEN, sizeof(TELEGRAM_BOT_TOKEN), "%s", env_tg_token);
     char *env_tg_chat = getenv("CMICRO_TG_CHAT");
@@ -254,8 +291,8 @@ void start_web_server(int port) {
                 send(client_fd, unauth, (int)strlen(unauth), 0);
             } else {
                 SystemMetrics m = get_system_metrics();
-                double ram_used_calc = (double)(m.ram_total_mb - m.ram_free_mb);
-                double ram_pct = m.ram_total_mb > 0 ? (ram_used_calc / m.ram_total_mb) * 100 : 0;
+                double ram_used_calc = (double)(m.total_ram_mb - m.free_ram_mb);
+                double ram_pct = m.total_ram_mb > 0 ? (ram_used_calc / m.total_ram_mb) * 100 : 0;
                 if (IS_PRO_LICENSED && (m.cpu_usage > 80.0 || ram_pct > 80.0)) {
                     send_telegram_alert(m.cpu_usage, ram_pct);
                 }
@@ -274,8 +311,8 @@ void start_web_server(int port) {
                 const char *unauth = "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n";
                 send(client_fd, unauth, (int)strlen(unauth), 0);
             } else {
-                char *k = strstr(request, "key="); char key_buf[32] = {0};
-                if (k) sscanf(k + 4, "%20s", key_buf);
+                char *k = strstr(request, "key="); char key_buf[64] = {0};
+                if (k) sscanf(k + 4, "%60s", key_buf);
                 if (validate_license_key(key_buf)) {
                     IS_PRO_LICENSED = 1;
                     const char *ok = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nVALID";
