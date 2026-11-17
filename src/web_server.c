@@ -1,19 +1,49 @@
 #include "os_pulse_core.h"
 #include <string.h>
+#include <stdlib.h>
 
 #if defined(_WIN32)
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #include <windows.h>
     typedef SOCKET socket_t;
     #define CLOSE_SOCKET closesocket
 #else
     #include <unistd.h>
     #include <arpa/inet.h>
     #include <sys/socket.h>
+    #include <signal.h>
     typedef int socket_t;
     #define INVALID_SOCKET -1
     #define CLOSE_SOCKET close
 #endif
+
+static void kill_process_by_pid(int pid) {
+#if defined(_WIN32)
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32 pe;
+        pe.dwSize = sizeof(pe);
+        if (Process32First(hSnap, &pe)) {
+            do {
+                if (pe.th32ProcessID == (DWORD)pid) {
+                    HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+                    if (hProc) {
+                        TerminateProcess(hProc, 1);
+                        CloseHandle(hProc);
+                    }
+                    break;
+                }
+            } while (Process32Next(hSnap, &pe));
+        }
+        CloseHandle(hSnap);
+    }
+#else
+    if (pid > 1) {
+        kill((pid_t)pid, SIGKILL);
+    }
+#endif
+}
 
 static const char *HTML_DASHBOARD =
 "HTTP/1.1 200 OK\r\n"
@@ -35,6 +65,8 @@ static const char *HTML_DASHBOARD =
 ".alert-ctrl input{width:50px;background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:0.2rem;border-radius:4px;text-align:center;}"
 ".btn{background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:0.4rem 0.8rem;border-radius:8px;cursor:pointer;font-size:0.85rem;font-weight:600;}"
 ".btn:hover{background:#334155;}"
+".btn-danger{background:#7f1d1d;border:1px solid #ef4444;color:#fecaca;padding:0.2rem 0.5rem;border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:600;}"
+".btn-danger:hover{background:#991b1b;}"
 ".alert-banner{display:none;background:#7f1d1d;border:1px solid #ef4444;color:#fecaca;padding:0.85rem 1rem;border-radius:8px;margin-top:1rem;font-weight:600;animation:pulse 1.5s infinite;}"
 "@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.75;}}"
 ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1rem;margin-top:1.25rem;}"
@@ -58,6 +90,7 @@ static const char *HTML_DASHBOARD =
 "  </div>"
 "  <div class='controls'>"
 "    <button id='langBtn' class='btn' onclick='toggleLang()'>🌐 English</button>"
+"    <button id='csvBtn' class='btn' onclick='exportCSV()'>📥 تصدير تقرير CSV</button>"
 "    <button id='soundBtn' class='btn' onclick='toggleSound()'>🔔 التنبيه الصوتي: مفعل</button>"
 "    <div class='alert-ctrl'><span id='threshLbl'>حد التنبيه:</span> <input type='number' id='thresh' value='80' min='1' max='99'> %</div>"
 "  </div>"
@@ -76,15 +109,15 @@ static const char *HTML_DASHBOARD =
 "    <div class='legend'><span><i class='dot' style='background:#22d3ee'></i><span id='legCpu'>المعالج %</span></span><span><i class='dot' style='background:#a855f7'></i><span id='legRam'>الذاكرة %</span></span></div>"
 "  </div>"
 "  <div class='card'>"
-"    <div class='label' id='lblProcs'>أكثر العمليات استهلاكاً للذاكرة</div>"
-"    <table><thead><tr><th id='thPid'>المعرف</th><th id='thName'>العملية</th><th id='thMem'>الذاكرة</th></tr></thead><tbody id='procBody'></tbody></table>"
+"    <div class='label' id='lblProcs'>أكثر العمليات استهلاكاً للذاكرة (مع إمكانية الإنهاء الفوري)</div>"
+"    <table><thead><tr><th id='thPid'>المعرف</th><th id='thName'>العملية</th><th id='thMem'>الذاكرة</th><th id='thAct'>إجراء</th></tr></thead><tbody id='procBody'></tbody></table>"
 "  </div>"
 "</div></div>"
 "<script>"
-"let lang = 'ar', soundEnabled = true, audioCtx = null;"
+"let lang = 'ar', soundEnabled = true, audioCtx = null, latestData = null;"
 "const dict = {"
-"  ar: { title:'حارس الأنظمة C-MicroOS', live:'● مباشر', langBtn:'🌐 English', soundOn:'🔔 التنبيه الصوتي: مفعل', soundOff:'🔕 التنبيه الصوتي: صامت', thresh:'حد التنبيه:', cpu:'حمل المعالج (CPU)', subCpu:'قراءة مباشرة من النواة', ram:'استهلاك الذاكرة (RAM)', disk:'مساحة التخزين', uptime:'مدة التشغيل', subUptime:'وقت عمل النواة المتواصل', chart:'المراقبة الحية للموارد (آخر 60 ثانية)', legCpu:'المعالج %', legRam:'الذاكرة %', procs:'أكثر العمليات استهلاكاً للذاكرة', pid:'المعرف', name:'العملية', mem:'الذاكرة', free:'متاح:', total:'الإجمالي:', freeOf:'متاح من أصل', sec:'ثانية', alert:'⚠ تنبيه: تم تجاوز الحد المسموح! المعالج:' },"
-"  en: { title:'C-MicroOS Edge Sentinel', live:'● LIVE', langBtn:'🌐 عربي', soundOn:'🔔 Audio Alert: ON', soundOff:'🔕 Audio Alert: OFF', thresh:'Threshold:', cpu:'CPU Load', subCpu:'Real-time Kernel Telemetry', ram:'Memory Usage', disk:'Root Storage', uptime:'System Uptime', subUptime:'Active Kernel Time', chart:'Real-Time Resource Telemetry (60s History)', legCpu:'CPU %', legRam:'RAM %', procs:'Top Active Processes (By RAM)', pid:'PID', name:'Process', mem:'Memory', free:'Free:', total:'Total:', freeOf:'Free of', sec:'s', alert:'⚠ ALERT: High Load Detected! CPU:' }"
+"  ar: { title:'حارس الأنظمة C-MicroOS', live:'● مباشر', langBtn:'🌐 English', csvBtn:'📥 تصدير تقرير CSV', soundOn:'🔔 التنبيه الصوتي: مفعل', soundOff:'🔕 التنبيه الصوتي: صامت', thresh:'حد التنبيه:', cpu:'حمل المعالج (CPU)', subCpu:'قراءة مباشرة من النواة', ram:'استهلاك الذاكرة (RAM)', disk:'مساحة التخزين', uptime:'مدة التشغيل', subUptime:'وقت عمل النواة المتواصل', chart:'المراقبة الحية للموارد (آخر 60 ثانية)', legCpu:'المعالج %', legRam:'الذاكرة %', procs:'أكثر العمليات استهلاكاً للذاكرة (مع إمكانية الإنهاء الفوري)', pid:'المعرف', name:'العملية', mem:'الذاكرة', act:'إجراء', kill:'إيقاف', free:'متاح:', total:'الإجمالي:', freeOf:'متاح من أصل', sec:'ثانية', alert:'⚠ تنبيه: تم تجاوز الحد المسموح! المعالج:' },"
+"  en: { title:'C-MicroOS Edge Sentinel', live:'● LIVE', langBtn:'🌐 عربي', csvBtn:'📥 Export CSV Report', soundOn:'🔔 Audio Alert: ON', soundOff:'🔕 Audio Alert: OFF', thresh:'Threshold:', cpu:'CPU Load', subCpu:'Real-time Kernel Telemetry', ram:'Memory Usage', disk:'Root Storage', uptime:'System Uptime', subUptime:'Active Kernel Time', chart:'Real-Time Resource Telemetry (60s History)', legCpu:'CPU %', legRam:'RAM %', procs:'Top Active Processes (With Instant Kill)', pid:'PID', name:'Process', mem:'Memory', act:'Action', kill:'Kill', free:'Free:', total:'Total:', freeOf:'Free of', sec:'s', alert:'⚠ ALERT: High Load Detected! CPU:' }"
 "};"
 "function applyLang(){"
 "  const t = dict[lang];"
@@ -93,6 +126,7 @@ static const char *HTML_DASHBOARD =
 "  document.getElementById('appTitle').innerText = t.title;"
 "  document.getElementById('liveBadge').innerText = t.live;"
 "  document.getElementById('langBtn').innerText = t.langBtn;"
+"  document.getElementById('csvBtn').innerText = t.csvBtn;"
 "  document.getElementById('soundBtn').innerText = soundEnabled ? t.soundOn : t.soundOff;"
 "  document.getElementById('threshLbl').innerText = t.thresh;"
 "  document.getElementById('lblCpu').innerText = t.cpu;"
@@ -108,8 +142,9 @@ static const char *HTML_DASHBOARD =
 "  document.getElementById('thPid').innerText = t.pid;"
 "  document.getElementById('thName').innerText = t.name;"
 "  document.getElementById('thMem').innerText = t.mem;"
+"  document.getElementById('thAct').innerText = t.act;"
 "}"
-"function toggleLang(){ lang = lang === 'ar' ? 'en' : 'ar'; applyLang(); update(); }"
+"function toggleLang(){ lang = lang === 'ar' ? 'en' : 'ar'; applyLang(); if(latestData) renderProcs(latestData); }"
 "function playBeep(){"
 "  if(!soundEnabled) return;"
 "  try{"
@@ -124,10 +159,28 @@ static const char *HTML_DASHBOARD =
 "    osc.start(); osc.stop(audioCtx.currentTime + 0.25);"
 "  }catch(e){}"
 "}"
-"function toggleSound(){"
-"  soundEnabled = !soundEnabled;"
-"  applyLang();"
-"  if(soundEnabled) playBeep();"
+"function toggleSound(){ soundEnabled = !soundEnabled; applyLang(); if(soundEnabled) playBeep(); }"
+"async function killProc(pid){"
+"  if(!confirm('Are you sure you want to terminate PID ' + pid + '?')) return;"
+"  await fetch('/api/kill?pid=' + pid, {method: 'POST'});"
+"  update();"
+"}"
+"function exportCSV(){"
+"  if(!latestData) return;"
+"  const t = dict[lang];"
+"  let csv = 'Metric,Value\\n';"
+"  csv += 'CPU %,' + latestData.cpu_percent + '\\n';"
+"  csv += 'RAM Used (MB),' + latestData.ram_used_mb + '\\n';"
+"  csv += 'RAM Free (MB),' + latestData.ram_free_mb + '\\n';"
+"  csv += 'Disk Free (GB),' + latestData.disk_free_gb + '\\n';"
+"  csv += 'Uptime (sec),' + latestData.uptime_sec + '\\n\\n';"
+"  csv += 'PID,Process Name,Memory (MB)\\n';"
+"  (latestData.processes || []).forEach(p => { csv += p.pid + ',\"' + p.name + '\"\\,' + p.mem_mb + '\\n'; });"
+"  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });"
+"  const url = URL.createObjectURL(blob);"
+"  const a = document.createElement('a'); a.href = url;"
+"  a.download = 'cmicro_os_report_' + Date.now() + '.csv';"
+"  a.click();"
 "}"
 "const cpuHist = Array(40).fill(0), ramHist = Array(40).fill(0);"
 "const canvas = document.getElementById('chart'), ctx = canvas.getContext('2d');"
@@ -143,10 +196,16 @@ static const char *HTML_DASHBOARD =
 "  }"
 "  plot(ramHist, '#a855f7'); plot(cpuHist, '#22d3ee');"
 "}"
+"function renderProcs(d){"
+"  const t = dict[lang];"
+"  const tbody = document.getElementById('procBody');"
+"  tbody.innerHTML = (d.processes || []).map(p => '<tr><td>'+p.pid+'</td><td>'+p.name+'</td><td dir=\"ltr\">'+p.mem_mb.toFixed(1)+' MB</td><td><button class=\"btn-danger\" onclick=\"killProc('+p.pid+')\">'+t.kill+'</button></td></tr>').join('');"
+"}"
 "async function update(){"
 "  try{"
 "    const r = await fetch('/api/metrics');"
 "    const d = await r.json();"
+"    latestData = d;"
 "    const t = dict[lang];"
 "    const ramPct = d.ram_total_mb > 0 ? (d.ram_used_mb / d.ram_total_mb)*100 : 0;"
 "    document.getElementById('cpu').innerText = d.cpu_percent.toFixed(1) + '%';"
@@ -165,8 +224,7 @@ static const char *HTML_DASHBOARD =
 "      alertBox.innerText = t.alert + ' ' + d.cpu_percent.toFixed(1) + '% | RAM: ' + ramPct.toFixed(1) + '% (' + thresh + '%)';"
 "      playBeep();"
 "    } else { alertBox.style.display = 'none'; }"
-"    const tbody = document.getElementById('procBody');"
-"    tbody.innerHTML = (d.processes || []).map(p => '<tr><td>'+p.pid+'</td><td>'+p.name+'</td><td dir=\"ltr\">'+p.mem_mb.toFixed(1)+' MB</td></tr>').join('');"
+"    renderProcs(d);"
 "  }catch(e){}"
 "}"
 "applyLang(); setInterval(update, 1000); update();"
@@ -192,7 +250,7 @@ void start_web_server(int port) {
     if (listen(server_fd, 10) < 0) { perror("Listen failed"); CLOSE_SOCKET(server_fd); return; }
 
     printf("==================================================\n");
-    printf("  C-MicroOS Edge Sentinel (AR/EN Bilingual UI)    \n");
+    printf("  C-MicroOS v1.1 (Kill Process & CSV Export)      \n");
     printf("  Dashboard URL : http://localhost:%d             \n", port);
     printf("==================================================\n");
 
@@ -218,6 +276,14 @@ void start_web_server(int port) {
                      "Connection: close\r\n\r\n%s",
                      json_body);
             send(client_fd, response, (int)strlen(response), 0);
+        } else if (strncmp(request, "POST /api/kill", 14) == 0) {
+            char *pid_str = strstr(request, "pid=");
+            if (pid_str) {
+                int pid = atoi(pid_str + 4);
+                kill_process_by_pid(pid);
+            }
+            const char *resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
+            send(client_fd, resp, (int)strlen(resp), 0);
         } else {
             send(client_fd, HTML_DASHBOARD, (int)strlen(HTML_DASHBOARD), 0);
         }
