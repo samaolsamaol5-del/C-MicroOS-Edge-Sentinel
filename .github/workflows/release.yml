@@ -33,15 +33,11 @@ jobs:
       - name: Build Project
         run: cmake --build build --config Release
 
-      - name: Prepare Binary Directory
+      - name: Collect Binaries
         shell: bash
         run: |
           mkdir -p dist
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            find build -name "cmicro_os.exe" -exec cp {} dist/ \;
-          else
-            find build -name "cmicro_os" -not -path "*/CMakeFiles/*" -exec cp {} dist/ \;
-          fi
+          find build -type f \( -name "cmicro_os" -o -name "cmicro_os.exe" \) -not -path "*/CMakeFiles/*" -exec cp {} dist/ \;
           ls -la dist
 
       - name: Upload Artifact
@@ -65,9 +61,6 @@ jobs:
       - name: Create GitHub Release & Upload Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/C-MicroOS-linux-x64/*
-            artifacts/C-MicroOS-windows-x64/*
-            artifacts/C-MicroOS-macos-universal/*
+          files: artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
