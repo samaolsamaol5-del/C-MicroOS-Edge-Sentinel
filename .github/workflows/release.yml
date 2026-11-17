@@ -16,12 +16,15 @@ jobs:
           - os: ubuntu-latest
             arch: linux-x64
             artifact_name: C-MicroOS-linux-x64
+            bin_name: cmicro_os
           - os: windows-latest
             arch: windows-x64
             artifact_name: C-MicroOS-windows-x64
+            bin_name: cmicro_os.exe
           - os: macos-latest
             arch: macos-universal
             artifact_name: C-MicroOS-macos-universal
+            bin_name: cmicro_os
 
     steps:
       - name: Checkout Repository
@@ -34,16 +37,15 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Prepare Binary
-        id: prep
         shell: bash
         run: |
           mkdir -p dist
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp build/Release/cmicro_os.exe dist/cmicro_os.exe
-          elif [ -f "build/cmicro_os" ]; then
-            cp build/cmicro_os dist/cmicro_os
+            cp build/Release/${{ matrix.bin_name }} dist/
+          elif [ -f "build/${{ matrix.bin_name }}" ]; then
+            cp build/${{ matrix.bin_name }} dist/
           else
-            cp build/Release/cmicro_os dist/cmicro_os
+            cp build/Release/${{ matrix.bin_name }} dist/
           fi
 
       - name: Upload Artifact
@@ -64,15 +66,12 @@ jobs:
         with:
           path: artifacts
 
-      - name: Display structure of downloaded files
-        run: ls -R artifacts
-
       - name: Create GitHub Release & Upload Assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/C-MicroOS-linux-x64/*
-            artifacts/C-MicroOS-windows-x64/*
-            artifacts/C-MicroOS-macos-universal/*
+            artifacts/C-MicroOS-linux-x64/cmicro_os
+            artifacts/C-MicroOS-windows-x64/cmicro_os.exe
+            artifacts/C-MicroOS-macos-universal/cmicro_os
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
