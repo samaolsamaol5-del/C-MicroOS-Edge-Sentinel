@@ -15,10 +15,13 @@ jobs:
         include:
           - os: ubuntu-latest
             arch: linux-x64
+            artifact_name: C-MicroOS-linux-x64
           - os: windows-latest
             arch: windows-x64
+            artifact_name: C-MicroOS-windows-x64
           - os: macos-latest
             arch: macos-universal
+            artifact_name: C-MicroOS-macos-universal
 
     steps:
       - name: Checkout Repository
@@ -30,23 +33,24 @@ jobs:
       - name: Build Project
         run: cmake --build build --config Release
 
-      - name: Find Binary
-        id: find_binary
+      - name: Prepare Binary
+        id: prep
         shell: bash
         run: |
+          mkdir -p dist
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            echo "bin_path=build/Release/cmicro_os.exe" >> $GITHUB_OUTPUT
+            cp build/Release/cmicro_os.exe dist/cmicro_os.exe
           elif [ -f "build/cmicro_os" ]; then
-            echo "bin_path=build/cmicro_os" >> $GITHUB_OUTPUT
+            cp build/cmicro_os dist/cmicro_os
           else
-            echo "bin_path=build/Release/cmicro_os" >> $GITHUB_OUTPUT
+            cp build/Release/cmicro_os dist/cmicro_os
           fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: C-MicroOS-${{ matrix.arch }}
-          path: ${{ steps.find_binary.outputs.bin_path }}
+          name: ${{ matrix.artifact_name }}
+          path: dist/*
 
   release:
     needs: build
@@ -55,10 +59,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Download Artifacts
+      - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
 
       - name: Create GitHub Release & Upload Assets
         uses: softprops/action-gh-release@v2
