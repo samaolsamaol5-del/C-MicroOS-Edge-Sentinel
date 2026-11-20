@@ -1,4 +1,4 @@
-
+﻿
 
 static int is_valid_tg_token(const char *s) {
     if (!s || *s == '\0') return 0;
@@ -62,3 +62,5 @@ static void send_telegram_alert(double cpu, double ram) {
         }
     }
 }
+
+
