@@ -44,7 +44,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find build -type f \( -name "cmicro_os" -o -name "cmicro_os.exe" \) -not -path "*/CMakeFiles/*" -exec cp {} dist/ \;
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            find build -type f -name "cmicro_os.exe" -not -path "*/CMakeFiles/*" -exec cp {} "dist/cmicro_os-${{ matrix.arch }}.exe" \;
+          else
+            find build -type f -name "cmicro_os" -not -path "*/CMakeFiles/*" -exec cp {} "dist/cmicro_os-${{ matrix.arch }}" \;
+          fi
           ls -la dist
 
       - name: Upload Artifact
