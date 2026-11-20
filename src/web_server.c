@@ -289,7 +289,7 @@ static const char *HTML_DASHBOARD =
 "function exportCSV(){"
 "  if(!latestData) return;"
 "  if(!latestData.pro_licensed){ alert('⚠️ تصدير التقارير متاح في النسخة الاحترافية (PRO) فقط!'); return; }"
-"  let csv = 'Metric,Value\\nCPU %,' + latestData.cpu_usage + '\\nRAM (MB),' + latestData.ram_free_mb + '\\nDisk Free (GB),' + latestData.disk_free_gb + '\\n';"
+"  let csv = 'Metric,Value\\nCPU %,' + latestData.cpu_percent + '\\nRAM (MB),' + latestData.ram_free_mb + '\\nDisk Free (GB),' + latestData.disk_free_gb + '\\n';"
 "  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });"
 "  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'cmicro_pro_report.csv'; a.click();"
 "}"
@@ -308,18 +308,18 @@ static const char *HTML_DASHBOARD =
 "    document.getElementById('licBadge').innerText = d.pro_licensed ? 'PRO ACTIVATED' : 'FREE EDITION';"
 "    document.getElementById('licBadge').style.background = d.pro_licensed ? '#065f46' : '#374151';"
 "    const ramPct = d.ram_total_mb > 0 ? ((d.ram_total_mb - d.ram_free_mb) / d.ram_total_mb)*100 : 0;"
-"    document.getElementById('cpu').innerText = d.cpu_usage.toFixed(1) + '%';"
+"    document.getElementById('cpu').innerText = d.cpu_percent.toFixed(1) + '%';"
 "    document.getElementById('ram').innerText = (d.ram_total_mb - d.ram_free_mb) + ' MB';"
 "    document.getElementById('ram_sub').innerText = 'متاح: ' + d.ram_free_mb + ' / ' + d.ram_total_mb + ' MB';"
 "    document.getElementById('disk').innerText = d.disk_free_gb + ' GB';"
 "    document.getElementById('disk_sub').innerText = 'من أصل ' + d.disk_total_gb + ' GB';"
 "    document.getElementById('uptime').innerText = d.uptime_sec + ' s';"
-"    cpuHist.push(d.cpu_usage); cpuHist.shift(); ramHist.push(ramPct); ramHist.shift(); drawChart();"
+"    cpuHist.push(d.cpu_percent); cpuHist.shift(); ramHist.push(ramPct); ramHist.shift(); drawChart();"
 "    const thresh = parseFloat(document.getElementById('thresh').value) || 80;"
 "    const alertBox = document.getElementById('alertBox');"
-"    if(d.cpu_usage > thresh || ramPct > thresh){"
+"    if(d.cpu_percent > thresh || ramPct > thresh){"
 "      alertBox.style.display = 'block';"
-"      alertBox.innerText = '⚠️ تنبيه: تجاوز استخدام الموارد الحد المسموح (CPU: ' + d.cpu_usage.toFixed(1) + '% | RAM: ' + ramPct.toFixed(1) + '%)';"
+"      alertBox.innerText = '⚠️ تنبيه: تجاوز استخدام الموارد الحد المسموح (CPU: ' + d.cpu_percent.toFixed(1) + '% | RAM: ' + ramPct.toFixed(1) + '%)';"
 "    } else { alertBox.style.display = 'none'; }"
 "    document.getElementById('procBody').innerHTML = (d.processes || []).map(p => '<tr><td>'+p.pid+'</td><td>'+p.name+'</td><td dir=\"ltr\">'+p.mem_mb.toFixed(1)+' MB</td><td><button class=\"btn-danger\" onclick=\"killProc('+p.pid+')\">إيقاف</button></td></tr>').join('');"
 "  }catch(e){}"
@@ -356,7 +356,7 @@ void start_web_server(int port) {
     listen(server_fd, 10);
 
     printf("==================================================\n");
-    printf("  C-MicroOS v1.2.1 Pro + Telegram Alerts          \n");
+    printf("  C-MicroOS v1.2.5 Pro + Telegram Alerts          \n");
     printf("  Dashboard URL : http://localhost:%d             \n", port);
     printf("  Access Token  : %s                              \n", SERVER_TOKEN);
     printf("  License Mode  : %s                              \n", IS_PRO_LICENSED ? "PRO ACTIVATED" : "FREE (Limited)");
@@ -397,7 +397,7 @@ void start_web_server(int port) {
                 send(client_fd, unauth, (int)strlen(unauth), 0);
             } else {
                 char *k = strstr(request, "key="); char key_buf[64] = {0};
-                if (k) sscanf(k + 4, "%60s", key_buf);
+                if (k) sscanf(k + 4, "%60[^ &\r\n]", key_buf);
                 if (validate_license_key(key_buf)) {
                     IS_PRO_LICENSED = 1;
                     const char *ok = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nVALID";
