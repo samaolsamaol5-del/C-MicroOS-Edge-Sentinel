@@ -4,8 +4,6 @@ project(CMicroOS C)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-find_package(CURL REQUIRED)
-
 include_directories(include)
 
 add_executable(cmicro_os
@@ -14,8 +12,9 @@ add_executable(cmicro_os
     src/web_server.c
 )
 
-target_link_libraries(cmicro_os CURL::libcurl)
-
 if(WIN32)
-    target_link_libraries(cmicro_os ws2_32 psapi)
+    target_link_libraries(cmicro_os ws2_32 psapi winhttp)
+else()
+    find_package(CURL REQUIRED)
+    target_link_libraries(cmicro_os CURL::libcurl)
 endif()
