@@ -1,0 +1,10 @@
+﻿*.exe
+*.zip
+*.bak
+*.tmp
+*.o
+*.obj
+build/
+release_pkg/
+build_err.txt
+gcc_out.txt

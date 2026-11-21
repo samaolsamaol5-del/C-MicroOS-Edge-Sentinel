@@ -1,0 +1,69 @@
+name: Build & Release C-MicroOS Edge Sentinel
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: linux-x64
+            artifact_name: C-MicroOS-linux-x64
+          - os: windows-latest
+            arch: windows-x64
+            artifact_name: C-MicroOS-windows-x64
+          - os: macos-latest
+            arch: macos-universal
+            artifact_name: C-MicroOS-macos-universal
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Project
+        run: cmake --build build --config Release
+
+      - name: Collect Binaries
+        shell: bash
+        run: |
+          mkdir -p dist
+          find build -type f \( -name "cmicro_os" -o -name "cmicro_os.exe" \) -not -path "*/CMakeFiles/*" -exec cp {} dist/ \;
+          ls -la dist
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release & Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
